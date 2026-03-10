@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import os
@@ -205,20 +204,18 @@ async def fetch_admin_name(c: Client):
 # ──────────────────────────────────────────
 #  helper — بعت inline keyboard بـ style مباشرة للـ API
 # ──────────────────────────────────────────
-import httpx
+import aiohttp
 
 async def send_message_with_styled_buttons(
     bot_token: str,
     chat_id: int,
     text: str,
-    buttons: list,  # list of list of dicts
+    buttons: list,
     photo: str = None,
     parse_mode: str = "Markdown",
 ):
     """
-    بيبعت رسالة مع أزرار ملونة باستخدام raw HTTP لأن pyrogram مش بيدعم style field لسه.
-    buttons مثال:
-      [[{"text": "اضغط", "callback_data": "x", "style": "success"}]]
+    بيبعت رسالة مع أزرار ملونة باستخدام raw HTTP — Bot API 9.4 style field.
     """
     payload = {
         "chat_id": chat_id,
@@ -233,9 +230,9 @@ async def send_message_with_styled_buttons(
         payload["text"] = text
         endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(endpoint, json=payload)
-        return resp.json()
+    async with aiohttp.ClientSession() as session:
+        async with session.post(endpoint, json=payload) as resp:
+            return await resp.json()
 
 
 # ──────────────────────────────────────────
