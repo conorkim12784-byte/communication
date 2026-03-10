@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 import os
@@ -12,7 +13,6 @@ from pyrogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
-    ReplyKeyboardMarkup,
 )
 from pyromod import listen
 
@@ -148,15 +148,45 @@ b3kkk = Client(
     bot_token=BOT_TOKEN,
 )
 
-REB = ReplyKeyboardMarkup(
-    [
-        [("تفعيل التواصل"), ("تعطيل التواصل")],
-        [("الاحصائيات"),    ("اذاعه للكل")],
-        [("الغاء حظر عضو"), ("حظر عضو")],
-        [("الغاء")],
-    ],
-    resize_keyboard=True,
-)
+def get_admin_kb() -> InlineKeyboardMarkup:
+    """لوحة تحكم المطور — Inline أزرار (fallback بدون ألوان)."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ تفعيل التواصل",  callback_data="tw_on"),
+            InlineKeyboardButton("🔴 تعطيل التواصل", callback_data="tw_off"),
+        ],
+        [
+            InlineKeyboardButton("📊 الاحصائيات",    callback_data="adm_stats"),
+            InlineKeyboardButton("📢 اذاعه للكل",    callback_data="adm_broad"),
+        ],
+        [
+            InlineKeyboardButton("✔️ الغاء حظر عضو", callback_data="adm_unban"),
+            InlineKeyboardButton("🚫 حظر عضو",       callback_data="adm_ban"),
+        ],
+    ])
+
+def get_admin_buttons_raw() -> list:
+    """أزرار لوحة التحكم بـ style ألوان — Bot API 9.4."""
+    return [
+        [
+            {"text": "✅ تفعيل التواصل",  "callback_data": "tw_on",      "style": "success"},
+            {"text": "🔴 تعطيل التواصل", "callback_data": "tw_off",     "style": "danger"},
+        ],
+        [
+            {"text": "📊 الاحصائيات",    "callback_data": "adm_stats",  "style": "primary"},
+            {"text": "📢 اذاعه للكل",    "callback_data": "adm_broad",  "style": "primary"},
+        ],
+        [
+            {"text": "✔️ الغاء حظر عضو", "callback_data": "adm_unban",  "style": "success"},
+            {"text": "🚫 حظر عضو",       "callback_data": "adm_ban",    "style": "danger"},
+        ],
+    ]
+
+def get_welcome_button_raw(admin_id: int, admin_name: str) -> list:
+    """زر الترحيب للمستخدم — أخضر (success)."""
+    return [[
+        {"text": f"💬 {admin_name}", "callback_data": f"noop_{admin_id}", "style": "success"}
+    ]]
 
 
 # ──────────────────────────────────────────
@@ -173,6 +203,42 @@ async def fetch_admin_name(c: Client):
 
 
 # ──────────────────────────────────────────
+#  helper — بعت inline keyboard بـ style مباشرة للـ API
+# ──────────────────────────────────────────
+import httpx
+
+async def send_message_with_styled_buttons(
+    bot_token: str,
+    chat_id: int,
+    text: str,
+    buttons: list,  # list of list of dicts
+    photo: str = None,
+    parse_mode: str = "Markdown",
+):
+    """
+    بيبعت رسالة مع أزرار ملونة باستخدام raw HTTP لأن pyrogram مش بيدعم style field لسه.
+    buttons مثال:
+      [[{"text": "اضغط", "callback_data": "x", "style": "success"}]]
+    """
+    payload = {
+        "chat_id": chat_id,
+        "parse_mode": parse_mode,
+        "reply_markup": {"inline_keyboard": buttons},
+    }
+    if photo:
+        payload["caption"] = text
+        payload["photo"] = photo
+        endpoint = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+    else:
+        payload["text"] = text
+        endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(endpoint, json=payload)
+        return resp.json()
+
+
+# ──────────────────────────────────────────
 #  /start
 # ──────────────────────────────────────────
 @b3kkk.on_message(filters.command("start") & filters.private)
@@ -182,7 +248,12 @@ async def START(c: Client, m: Message):
 
     # الأدمن
     if user_id == ADMIN_ID:
-        await m.reply("اليك لوحه المطور", reply_markup=REB, quote=True)
+        await send_message_with_styled_buttons(
+            bot_token=BOT_TOKEN,
+            chat_id=m.from_user.id,
+            text="اليك لوحه المطور 👇",
+            buttons=get_admin_buttons_raw(),
+        )
         return
 
     # محظور
@@ -197,9 +268,7 @@ async def START(c: Client, m: Message):
         "في بوت التواصل الخاص بي\n"
         "ارسل رسالتك وسيتم الرد عليك قريبا"
     )
-    welcome_kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton(ADMIN_NAME, user_id=ADMIN_ID)]]
-    )
+    welcome_buttons_raw = get_welcome_button_raw(ADMIN_ID, ADMIN_NAME)
 
     # جيب صورة البروفايل وابعتها مع رسالة الترحيب ✔
     profile_photo = None
@@ -210,15 +279,13 @@ async def START(c: Client, m: Message):
     except Exception as e:
         logger.warning(f"welcome photo [{user_id}]: {e}")
 
-    if profile_photo:
-        await c.send_photo(
-            chat_id=user_id,
-            photo=profile_photo,
-            caption=welcome_text,
-            reply_markup=welcome_kb,
-        )
-    else:
-        await m.reply(welcome_text, reply_markup=welcome_kb, quote=True)
+    await send_message_with_styled_buttons(
+        bot_token=BOT_TOKEN,
+        chat_id=user_id,
+        text=welcome_text,
+        buttons=welcome_buttons_raw,
+        photo=profile_photo,
+    )
 
     if is_new:
         try:
@@ -240,37 +307,41 @@ async def START(c: Client, m: Message):
 
 
 # ──────────────────────────────────────────
-#  تفعيل / تعطيل التواصل ✔ مصلّح
+#  تفعيل / تعطيل التواصل — Callback من لوحة التحكم
 # ──────────────────────────────────────────
-@b3kkk.on_message(
-    filters.command("تفعيل التواصل", "") & filters.user(ADMIN_ID) & filters.private
-)
-async def OnTw(c: Client, m: Message):
+@b3kkk.on_callback_query(filters.regex(r"^tw_on$") & filters.user(ADMIN_ID))
+async def OnTw(c: Client, query: CallbackQuery):
     if IS_TW_ENABLED():
-        await m.reply(f"مطوري {m.from_user.mention}\nالتواصل مفعّل من قبل ✔", quote=True)
+        await query.answer("التواصل مفعّل من قبل ✔", show_alert=True)
     else:
         db_execute("INSERT INTO TWSEL(chat_id) VALUES(?)", (TW_KEY,))
-        await m.reply(f"مطوري {m.from_user.mention}\n✅ تم تفعيل التواصل", quote=True)
+        await query.answer("✅ تم تفعيل التواصل", show_alert=True)
+    try:
+        await query.message.edit_reply_markup(reply_markup=get_admin_kb())
+    except Exception:
+        pass
 
 
-@b3kkk.on_message(
-    filters.command("تعطيل التواصل", "") & filters.user(ADMIN_ID) & filters.private
-)
-async def OffTw(c: Client, m: Message):
+@b3kkk.on_callback_query(filters.regex(r"^tw_off$") & filters.user(ADMIN_ID))
+async def OffTw(c: Client, query: CallbackQuery):
     if IS_TW_ENABLED():
         db_execute("DELETE FROM TWSEL WHERE chat_id = ?", (TW_KEY,))
-        await m.reply(f"مطوري {m.from_user.mention}\n🔴 تم تعطيل التواصل", quote=True)
+        await query.answer("🔴 تم تعطيل التواصل", show_alert=True)
     else:
-        await m.reply(f"مطوري {m.from_user.mention}\nالتواصل معطّل من قبل 🔴", quote=True)
+        await query.answer("التواصل معطّل من قبل 🔴", show_alert=True)
+    try:
+        await query.message.edit_reply_markup(reply_markup=get_admin_kb())
+    except Exception:
+        pass
 
 
 # ──────────────────────────────────────────
 #  الإحصائيات
 # ──────────────────────────────────────────
-@b3kkk.on_message(
-    filters.command("الاحصائيات", "") & filters.user(ADMIN_ID) & filters.private
-)
-async def StatTw(c: Client, m: Message):
+@b3kkk.on_callback_query(filters.regex(r"^adm_stats$") & filters.user(ADMIN_ID))
+async def StatTw(c: Client, query: CallbackQuery):
+    m = query.message
+    await query.answer()
     wait = await m.reply("⏳ ثانية واحدة...")
     await asyncio.sleep(0.5)
 
@@ -306,10 +377,10 @@ async def StatTw(c: Client, m: Message):
 # ──────────────────────────────────────────
 #  إذاعة للكل
 # ──────────────────────────────────────────
-@b3kkk.on_message(
-    filters.command("اذاعه للكل", "") & filters.user(ADMIN_ID) & filters.private
-)
-async def Broad(c: Client, m: Message):
+@b3kkk.on_callback_query(filters.regex(r"^adm_broad$") & filters.user(ADMIN_ID))
+async def Broad(c: Client, query: CallbackQuery):
+    m = query.message
+    await query.answer()
     users = GET_USERS()
     if not users:
         await m.reply("➣ **<u>لا يوجد مستخدمين ليتم الإذاعة لهم</u>**")
@@ -320,7 +391,7 @@ async def Broad(c: Client, m: Message):
         reply_markup=ForceReply(),
     )
     if msg.text == "الغاء":
-        await m.reply("**تم الغاء الاذاعه**", reply_markup=REB)
+        await m.reply("**تم الغاء الاذاعه**", reply_markup=get_admin_kb())
         return
 
     rep = await m.reply("**⏳ انتظر يتم الاذاعه الان...**")
@@ -335,72 +406,72 @@ async def Broad(c: Client, m: Message):
     await rep.delete()
     await m.reply(
         f"➣ **<u>تم الاذاعه لـ {success}/{len(users)} من الاعضاء</u>**",
-        reply_markup=REB,
+        reply_markup=get_admin_kb(),
     )
 
 
 # ──────────────────────────────────────────
 #  حظر عضو
 # ──────────────────────────────────────────
-@b3kkk.on_message(
-    filters.command("حظر عضو", "") & filters.user(ADMIN_ID) & filters.private
-)
-async def Ban(c: Client, m: Message):
+@b3kkk.on_callback_query(filters.regex(r"^adm_ban$") & filters.user(ADMIN_ID))
+async def Ban(c: Client, query: CallbackQuery):
+    m = query.message
+    await query.answer()
     msg = await m.chat.ask(
         "**ارسل الان ايدي العضو المراد حظره**", reply_markup=ForceReply()
     )
     if msg.text == "الغاء":
-        await m.reply("**تم الغاء الامر**", reply_markup=REB)
+        await m.reply("**تم الغاء الامر**", reply_markup=get_admin_kb())
         return
 
     try:
         target_id = int(msg.text)
     except ValueError:
-        await m.reply("**ارسل ايدي صالح (أرقام فقط)**", reply_markup=REB)
+        await m.reply("**ارسل ايدي صالح (أرقام فقط)**", reply_markup=get_admin_kb())
         return
 
     if target_id == ADMIN_ID:
-        await m.reply("**لا يمكنك حظر نفسك**", reply_markup=REB)
+        await m.reply("**لا يمكنك حظر نفسك**", reply_markup=get_admin_kb())
         return
 
     if CHECK_BANNED(target_id):
-        await m.reply("**هذا المستخدم محظور من قبل**", reply_markup=REB)
+        await m.reply("**هذا المستخدم محظور من قبل**", reply_markup=get_admin_kb())
         return
 
     ADD_BAN(target_id)
-    await m.reply(f"**تم حظر `{target_id}` من البوت**", reply_markup=REB)
+    await m.reply(f"**تم حظر `{target_id}` من البوت**", reply_markup=get_admin_kb())
 
 
 # ──────────────────────────────────────────
 #  إلغاء حظر عضو
 # ──────────────────────────────────────────
-@b3kkk.on_message(
-    filters.command("الغاء حظر عضو", "") & filters.user(ADMIN_ID) & filters.private
-)
-async def UnBan(c: Client, m: Message):
+@b3kkk.on_callback_query(filters.regex(r"^adm_unban$") & filters.user(ADMIN_ID))
+async def UnBan(c: Client, query: CallbackQuery):
+    m = query.message
+    await query.answer()
     msg = await m.chat.ask(
         "**ارسل الان ايدي العضو المراد الغاء حظره**", reply_markup=ForceReply()
     )
     if msg.text == "الغاء":
-        await m.reply("**تم الغاء الامر**", reply_markup=REB)
+        await m.reply("**تم الغاء الامر**", reply_markup=get_admin_kb())
         return
 
     try:
         target_id = int(msg.text)
     except ValueError:
-        await m.reply("**ارسل ايدي صالح (أرقام فقط)**", reply_markup=REB)
+        await m.reply("**ارسل ايدي صالح (أرقام فقط)**", reply_markup=get_admin_kb())
         return
 
     if target_id == ADMIN_ID:
-        await m.reply("**لا يمكنك الغاء حظر نفسك**", reply_markup=REB)
+        await m.reply("**لا يمكنك الغاء حظر نفسك**", reply_markup=get_admin_kb())
         return
 
     if not CHECK_BANNED(target_id):
-        await m.reply("**هذا المستخدم لم يتم حظره من قبل**", reply_markup=REB)
+        await m.reply("**هذا المستخدم لم يتم حظره من قبل**", reply_markup=get_admin_kb())
         return
 
     DEL_BAN(target_id)
-    await m.reply(f"**تم الغاء حظر `{target_id}` من البوت**", reply_markup=REB)
+    await m.reply(f"**تم الغاء حظر `{target_id}` من البوت**", reply_markup=get_admin_kb())
 
     try:
         await c.send_message(target_id, "**مرحبا، تم الغاء حظرك من البوت بنجاح**")
@@ -483,6 +554,12 @@ async def Private(c: Client, m: Message):
 # ──────────────────────────────────────────
 #  Callback — حظر من الإنلاين
 # ──────────────────────────────────────────
+@b3kkk.on_callback_query(filters.regex(r"^noop_"))
+async def NoopCallback(c: Client, query: CallbackQuery):
+    """زر الترحيب — مجرد فتح بروفايل المطور."""
+    await query.answer()
+
+
 @b3kkk.on_callback_query(filters.regex(r"^Ban:(\d+)$"))
 async def BanInline(c: Client, query: CallbackQuery):
     target_id = int(query.data.split(":")[1])
