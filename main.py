@@ -38,6 +38,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# cache اسم المطور — يتجيب مرة واحدة وقت التشغيل
+ADMIN_NAME: str = "المطور"
 
 # ──────────────────────────────────────────
 #  قاعدة البيانات مع Thread Lock
@@ -52,9 +54,11 @@ db.execute("CREATE TABLE IF NOT EXISTS USERS    (user_id INTEGER PRIMARY KEY)")
 db.execute("CREATE TABLE IF NOT EXISTS BAN_USERS(user_id INTEGER PRIMARY KEY)")
 con.commit()
 
+# ID ثابت لحالة التواصل — مفعّل أو معطّل للكل
+TW_KEY = 1
+
 
 def db_execute(query: str, params: tuple = ()):
-    """تنفيذ أي write query بشكل آمن مع locking."""
     with _db_lock:
         db.execute(query, params)
         con.commit()
@@ -91,16 +95,13 @@ def GET_BAN_USERS() -> list:
 
 def CHECK_BANNED(user_id: int) -> bool:
     try:
-        result = db_fetchone(
-            "SELECT user_id FROM BAN_USERS WHERE user_id = ?", (user_id,)
-        )
+        result = db_fetchone("SELECT user_id FROM BAN_USERS WHERE user_id = ?", (user_id,))
         return result is not None
     except Exception as e:
         logger.error(f"CHECK_BANNED [{user_id}]: {e}")
         return False
 
 def ADD_BAN(user_id: int) -> bool:
-    """يحظر المستخدم — يرجع True لو نجح."""
     if CHECK_BANNED(user_id):
         return False
     try:
@@ -111,7 +112,6 @@ def ADD_BAN(user_id: int) -> bool:
         return False
 
 def DEL_BAN(user_id: int) -> bool:
-    """يرفع الحظر — يرجع True لو نجح."""
     if not CHECK_BANNED(user_id):
         return False
     try:
@@ -122,7 +122,6 @@ def DEL_BAN(user_id: int) -> bool:
         return False
 
 def ADD_USER(user_id: int) -> bool:
-    """يضيف مستخدم — يرجع True لو جديد."""
     existing = db_fetchone("SELECT user_id FROM USERS WHERE user_id = ?", (user_id,))
     if existing:
         return False
@@ -133,8 +132,9 @@ def ADD_USER(user_id: int) -> bool:
         logger.error(f"ADD_USER [{user_id}]: {e}")
         return False
 
-def IS_TW_ENABLED(chat_id: int) -> bool:
-    result = db_fetchone("SELECT chat_id FROM TWSEL WHERE chat_id = ?", (chat_id,))
+def IS_TW_ENABLED() -> bool:
+    """التواصل مفعّل أو معطّل للكل — مش مرتبط بـ chat_id."""
+    result = db_fetchone("SELECT chat_id FROM TWSEL WHERE chat_id = ?", (TW_KEY,))
     return result is not None
 
 
@@ -160,6 +160,19 @@ REB = ReplyKeyboardMarkup(
 
 
 # ──────────────────────────────────────────
+#  جيب اسم المطور عند بدء التشغيل
+# ──────────────────────────────────────────
+async def fetch_admin_name(c: Client):
+    global ADMIN_NAME
+    try:
+        admin = await c.get_users(ADMIN_ID)
+        ADMIN_NAME = admin.first_name or "المطور"
+        logger.info(f"Admin name loaded: {ADMIN_NAME}")
+    except Exception as e:
+        logger.warning(f"fetch_admin_name: {e}")
+
+
+# ──────────────────────────────────────────
 #  /start
 # ──────────────────────────────────────────
 @b3kkk.on_message(filters.command("start") & filters.private)
@@ -177,20 +190,36 @@ async def START(c: Client, m: Message):
         await m.reply("**تم حظرك من استخدام البوت**", quote=True)
         return
 
-    # سجّل المستخدم (True = جديد)
     is_new = ADD_USER(user_id)
 
-    await m.reply(
+    welcome_text = (
         f"مرحبا {m.from_user.mention}\n\n"
         "في بوت التواصل الخاص بي\n"
-        "ارسل رسالتك وسيتم الرد عليك قريبا",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Dev", user_id=ADMIN_ID)]]
-        ),
-        quote=True,
+        "ارسل رسالتك وسيتم الرد عليك قريبا"
+    )
+    welcome_kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(ADMIN_NAME, user_id=ADMIN_ID)]]
     )
 
-    # إشعار الأدمن بالمستخدم الجديد فقط
+    # جيب صورة البروفايل وابعتها مع رسالة الترحيب ✔
+    profile_photo = None
+    try:
+        async for photo in c.get_chat_photos(user_id, limit=1):
+            profile_photo = photo.file_id
+            break
+    except Exception as e:
+        logger.warning(f"welcome photo [{user_id}]: {e}")
+
+    if profile_photo:
+        await c.send_photo(
+            chat_id=user_id,
+            photo=profile_photo,
+            caption=welcome_text,
+            reply_markup=welcome_kb,
+        )
+    else:
+        await m.reply(welcome_text, reply_markup=welcome_kb, quote=True)
+
     if is_new:
         try:
             await c.send_message(
@@ -211,28 +240,28 @@ async def START(c: Client, m: Message):
 
 
 # ──────────────────────────────────────────
-#  تفعيل / تعطيل التواصل
+#  تفعيل / تعطيل التواصل ✔ مصلّح
 # ──────────────────────────────────────────
 @b3kkk.on_message(
     filters.command("تفعيل التواصل", "") & filters.user(ADMIN_ID) & filters.private
 )
 async def OnTw(c: Client, m: Message):
-    if IS_TW_ENABLED(m.chat.id):
-        await m.reply(f"مطوري {m.from_user.mention}\nتم تفعيل التواصل من قبل", quote=True)
+    if IS_TW_ENABLED():
+        await m.reply(f"مطوري {m.from_user.mention}\nالتواصل مفعّل من قبل ✔", quote=True)
     else:
-        db_execute("INSERT INTO TWSEL(chat_id) VALUES(?)", (m.chat.id,))
-        await m.reply(f"مطوري {m.from_user.mention}\nتم تفعيل التواصل", quote=True)
+        db_execute("INSERT INTO TWSEL(chat_id) VALUES(?)", (TW_KEY,))
+        await m.reply(f"مطوري {m.from_user.mention}\n✅ تم تفعيل التواصل", quote=True)
 
 
 @b3kkk.on_message(
     filters.command("تعطيل التواصل", "") & filters.user(ADMIN_ID) & filters.private
 )
 async def OffTw(c: Client, m: Message):
-    if IS_TW_ENABLED(m.chat.id):
-        db_execute("DELETE FROM TWSEL WHERE chat_id = ?", (m.chat.id,))
-        await m.reply(f"مطوري {m.from_user.mention}\nتم تعطيل التواصل", quote=True)
+    if IS_TW_ENABLED():
+        db_execute("DELETE FROM TWSEL WHERE chat_id = ?", (TW_KEY,))
+        await m.reply(f"مطوري {m.from_user.mention}\n🔴 تم تعطيل التواصل", quote=True)
     else:
-        await m.reply(f"مطوري {m.from_user.mention}\nالتواصل معطل من قبل", quote=True)
+        await m.reply(f"مطوري {m.from_user.mention}\nالتواصل معطّل من قبل 🔴", quote=True)
 
 
 # ──────────────────────────────────────────
@@ -243,11 +272,10 @@ async def OffTw(c: Client, m: Message):
 )
 async def StatTw(c: Client, m: Message):
     wait = await m.reply("⏳ ثانية واحدة...")
-    await asyncio.sleep(0.5)   # ✔ إصلاح: time.sleep → asyncio.sleep
+    await asyncio.sleep(0.5)
 
     users     = GET_USERS()
     ban_users = GET_BAN_USERS()
-
     users_path     = "Users.txt"
     ban_users_path = "Ban_Users.txt"
 
@@ -263,12 +291,10 @@ async def StatTw(c: Client, m: Message):
             await m.reply_document(users_path, caption="**<u>➣ User Stats</u>**")
         except Exception as e:
             logger.error(f"send users doc: {e}")
-
         try:
             await m.reply_document(ban_users_path, caption="**<u>➣ Ban User Stats</u>**")
         except Exception as e:
             logger.error(f"send ban_users doc: {e}")
-
     finally:
         for path in [users_path, ban_users_path]:
             try:
@@ -327,7 +353,6 @@ async def Ban(c: Client, m: Message):
         await m.reply("**تم الغاء الامر**", reply_markup=REB)
         return
 
-    # ✔ إصلاح: تحويل لـ int أولاً قبل أي مقارنة
     try:
         target_id = int(msg.text)
     except ValueError:
@@ -343,7 +368,6 @@ async def Ban(c: Client, m: Message):
         return
 
     ADD_BAN(target_id)
-    # ✔ إصلاح: أُغلق الـ string المفتوح
     await m.reply(f"**تم حظر `{target_id}` من البوت**", reply_markup=REB)
 
 
@@ -361,7 +385,6 @@ async def UnBan(c: Client, m: Message):
         await m.reply("**تم الغاء الامر**", reply_markup=REB)
         return
 
-    # ✔ إصلاح: تحويل لـ int أولاً
     try:
         target_id = int(msg.text)
     except ValueError:
@@ -377,10 +400,8 @@ async def UnBan(c: Client, m: Message):
         return
 
     DEL_BAN(target_id)
-    # ✔ إصلاح: أُغلق الـ string المفتوح
     await m.reply(f"**تم الغاء حظر `{target_id}` من البوت**", reply_markup=REB)
 
-    # ✔ إصلاح: الكود ده كان بعد return فما كانش بينفذ — دلوقتي شغال
     try:
         await c.send_message(target_id, "**مرحبا، تم الغاء حظرك من البوت بنجاح**")
     except Exception as e:
@@ -388,7 +409,7 @@ async def UnBan(c: Client, m: Message):
 
 
 # ──────────────────────────────────────────
-#  استقبال رسائل المستخدمين العاديين
+#  استقبال رسائل المستخدمين ✔ مع صورة البروفايل
 # ──────────────────────────────────────────
 @b3kkk.on_message(
     filters.private
@@ -402,22 +423,58 @@ async def Private(c: Client, m: Message):
         await m.reply("**تم حظرك من استخدام البوت**", quote=True)
         return
 
-    if not IS_TW_ENABLED(m.chat.id):
+    if not IS_TW_ENABLED():
         await m.reply("**عذرا التواصل معطل من قبل مطور البوت**", quote=True)
         return
 
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(m.from_user.first_name, user_id=user_id)],
+        [InlineKeyboardButton("الرد علي العضو",       callback_data=f"Reply:{user_id}")],
+        [InlineKeyboardButton("حظر هذا العضو",        callback_data=f"Ban:{user_id}")],
+    ])
+
+    # جيب صورة البروفايل ✔
+    profile_photo = None
     try:
-        await c.copy_message(
-            chat_id=ADMIN_ID,
-            from_chat_id=m.chat.id,
-            message_id=m.id,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(m.from_user.first_name, user_id=user_id)],
-                [InlineKeyboardButton("الرد علي العضو",       callback_data=f"Reply:{user_id}")],
-                [InlineKeyboardButton("حظر هذا العضو",        callback_data=f"Ban:{user_id}")],
-            ]),
-        )
+        photos = await c.get_chat_photos(user_id, limit=1)
+        async for photo in photos:
+            profile_photo = photo.file_id
+            break
+    except Exception as e:
+        logger.warning(f"get_chat_photos [{user_id}]: {e}")
+
+    caption = (
+        f"**رسالة من:** {m.from_user.mention}\n"
+        f"**ID:** `{user_id}`\n"
+        "─────────────────\n"
+    )
+
+    try:
+        if profile_photo:
+            # ابعت صورة البروفايل مع كابشن يوضح المرسل
+            await c.send_photo(
+                chat_id=ADMIN_ID,
+                photo=profile_photo,
+                caption=caption,
+                reply_markup=kb,
+            )
+            # بعدين ابعت الرسالة الأصلية
+            await c.copy_message(
+                chat_id=ADMIN_ID,
+                from_chat_id=m.chat.id,
+                message_id=m.id,
+            )
+        else:
+            # مفيش صورة — ابعت الرسالة بس مع الكيبورد
+            await c.copy_message(
+                chat_id=ADMIN_ID,
+                from_chat_id=m.chat.id,
+                message_id=m.id,
+                reply_markup=kb,
+            )
+
         await m.reply("**تم استلام رسالتك انتظر الرد**", quote=True)
+
     except Exception as e:
         logger.error(f"Private forward to admin: {e}")
         await m.reply("**حصل خطأ، حاول تاني لاحقاً**", quote=True)
@@ -443,11 +500,17 @@ async def BanInline(c: Client, query: CallbackQuery):
         InlineKeyboardButton("الدخول للعضو المحظور", user_id=target_id)
     ]])
     try:
-        await query.message.edit_text(
-            f"**تم حظر `{target_id}` من البوت**", reply_markup=key
+        await query.message.edit_caption(
+            caption=f"**تم حظر `{target_id}` من البوت**",
+            reply_markup=key,
         )
-    except Exception as e:
-        logger.warning(f"BanInline edit_text: {e}")
+    except Exception:
+        try:
+            await query.message.edit_text(
+                f"**تم حظر `{target_id}` من البوت**", reply_markup=key
+            )
+        except Exception as e:
+            logger.warning(f"BanInline edit: {e}")
     await query.answer("تم الحظر ✔")
 
 
@@ -455,7 +518,7 @@ async def BanInline(c: Client, query: CallbackQuery):
 #  Callback — الرد على عضو
 # ──────────────────────────────────────────
 @b3kkk.on_callback_query(filters.regex(r"^Reply:(\d+)$"))
-async def Reply(c: Client, query: CallbackQuery):
+async def ReplyToUser(c: Client, query: CallbackQuery):
     target_id = int(query.data.split(":")[1])
 
     try:
@@ -479,5 +542,11 @@ async def Reply(c: Client, query: CallbackQuery):
 # ──────────────────────────────────────────
 #  تشغيل
 # ──────────────────────────────────────────
+async def main():
+    async with b3kkk:
+        await fetch_admin_name(b3kkk)
+        print("😉 البوت شغال!")
+        await asyncio.get_event_loop().create_future()  # شغّل للأبد
+
 print("😉 جاري تشغيل البوت...")
-b3kkk.run()
+b3kkk.run(main())
