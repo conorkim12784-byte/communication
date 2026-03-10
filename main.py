@@ -150,7 +150,11 @@ async def edit_panel(chat_id: int, message_id: int, caption: str, buttons: list)
     })
     if res.get("ok"):
         return True
-    logger.warning(f"edit_panel: {res.get('description')}")
+    desc = res.get("description", "")
+    # مش خطأ حقيقي — الرسالة مش اتغيرت
+    if "not modified" in desc:
+        return True
+    logger.warning(f"edit_panel: {desc}")
     return False
 
 async def send_or_edit_panel(chat_id: int, caption: str, buttons: list):
@@ -188,37 +192,27 @@ async def send_welcome(chat_id: int, caption: str, buttons: list, photo: str | N
 #  أزرار raw
 # ──────────────────────────────────────────
 def admin_buttons() -> list:
-    """كل أزرار المطور زرقاء — primary."""
+    """أزرار لوحة التحكم — كلها زرقاء، وزر التواصل يتغير حسب الحالة."""
+    tw_text = "🔴 تعطيل التواصل" if IS_TW_ENABLED() else "✅ تفعيل التواصل"
+    tw_data = "tw_off"            if IS_TW_ENABLED() else "tw_on"
     return [
         [
-            {"text": "✅ تفعيل التواصل",  "callback_data": "tw_on",     "style": "primary"},
-            {"text": "🔴 تعطيل التواصل", "callback_data": "tw_off",    "style": "primary"},
+            {"text": tw_text,             "callback_data": tw_data,      "style": "primary"},
         ],
         [
-            {"text": "📊 الاحصائيات",    "callback_data": "adm_stats", "style": "primary"},
-            {"text": "📢 اذاعه للكل",    "callback_data": "adm_broad", "style": "primary"},
+            {"text": "📊 الاحصائيات",    "callback_data": "adm_stats",  "style": "primary"},
+            {"text": "📢 اذاعه للكل",    "callback_data": "adm_broad",  "style": "primary"},
         ],
         [
-            {"text": "✔️ الغاء حظر عضو", "callback_data": "adm_unban", "style": "primary"},
-            {"text": "🚫 حظر عضو",       "callback_data": "adm_ban",   "style": "primary"},
+            {"text": "✔️ الغاء حظر عضو", "callback_data": "adm_unban",  "style": "primary"},
+            {"text": "🚫 حظر عضو",       "callback_data": "adm_ban",    "style": "primary"},
         ],
     ]
 
-def admin_kb() -> InlineKeyboardMarkup:
-    """fallback pyrogram keyboard بدون ألوان."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ تفعيل التواصل",  callback_data="tw_on"),
-         InlineKeyboardButton("🔴 تعطيل التواصل", callback_data="tw_off")],
-        [InlineKeyboardButton("📊 الاحصائيات",    callback_data="adm_stats"),
-         InlineKeyboardButton("📢 اذاعه للكل",    callback_data="adm_broad")],
-        [InlineKeyboardButton("✔️ الغاء حظر عضو", callback_data="adm_unban"),
-         InlineKeyboardButton("🚫 حظر عضو",       callback_data="adm_ban")],
-    ])
-
 def welcome_buttons(admin_id: int, admin_name: str) -> list:
-    """زر الترحيب للمستخدم — أخضر success."""
+    """زر الترحيب للمستخدم — أزرق primary."""
     return [[
-        {"text": f"💬 {admin_name}", "callback_data": f"noop_{admin_id}", "style": "success"}
+        {"text": f"💬 {admin_name}", "callback_data": f"noop_{admin_id}", "style": "primary"}
     ]]
 
 PANEL_CAPTION = "🤖 **لوحة تحكم المطور**\nاختر من القائمة 👇"
@@ -448,10 +442,15 @@ async def Private(c: Client, m: Message):
     if not IS_TW_ENABLED():
         await m.reply("**عذرا التواصل معطل**", quote=True); return
 
+    user_buttons = [
+        [{"text": m.from_user.first_name,  "url": f"tg://user?id={user_id}", "style": "primary"}],
+        [{"text": "↩️ الرد علي العضو",     "callback_data": f"Reply:{user_id}", "style": "primary"}],
+        [{"text": "🚫 حظر هذا العضو",      "callback_data": f"Ban:{user_id}",   "style": "primary"}],
+    ]
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(m.from_user.first_name, user_id=user_id)],
-        [InlineKeyboardButton("الرد علي العضو", callback_data=f"Reply:{user_id}")],
-        [InlineKeyboardButton("حظر هذا العضو",  callback_data=f"Ban:{user_id}")],
+        [InlineKeyboardButton("↩️ الرد علي العضو", callback_data=f"Reply:{user_id}")],
+        [InlineKeyboardButton("🚫 حظر هذا العضو",  callback_data=f"Ban:{user_id}")],
     ])
     profile_photo = None
     try:
@@ -463,10 +462,22 @@ async def Private(c: Client, m: Message):
     caption = f"**رسالة من:** {m.from_user.mention}\n**ID:** `{user_id}`\n─────────────────"
     try:
         if profile_photo:
-            await c.send_photo(ADMIN_ID, profile_photo, caption=caption, reply_markup=kb)
+            await tg_api("sendPhoto", {
+                "chat_id": ADMIN_ID,
+                "photo": profile_photo,
+                "caption": caption,
+                "parse_mode": "Markdown",
+                "reply_markup": {"inline_keyboard": user_buttons},
+            })
             await c.copy_message(ADMIN_ID, m.chat.id, m.id)
         else:
-            await c.copy_message(ADMIN_ID, m.chat.id, m.id, reply_markup=kb)
+            await tg_api("sendMessage", {
+                "chat_id": ADMIN_ID,
+                "text": caption,
+                "parse_mode": "Markdown",
+                "reply_markup": {"inline_keyboard": user_buttons},
+            })
+            await c.copy_message(ADMIN_ID, m.chat.id, m.id)
         await m.reply("**تم استلام رسالتك انتظر الرد**", quote=True)
     except Exception as e:
         logger.error(f"forward: {e}")
@@ -488,11 +499,17 @@ async def BanInline(c: Client, query: CallbackQuery):
     if CHECK_BANNED(target_id):
         await query.answer("محظور من قبل", show_alert=True); return
     ADD_BAN(target_id)
-    key = InlineKeyboardMarkup([[InlineKeyboardButton("الدخول للعضو", user_id=target_id)]])
-    try: await query.message.edit_caption(f"**تم حظر `{target_id}`**", reply_markup=key)
-    except:
-        try: await query.message.edit_text(f"**تم حظر `{target_id}`**", reply_markup=key)
-        except Exception as e: logger.warning(f"BanInline: {e}")
+    ban_buttons = [[{"text": "👤 الدخول للعضو المحظور", "url": f"tg://user?id={target_id}", "style": "primary"}]]
+    try:
+        await tg_api("editMessageCaption", {
+            "chat_id": query.message.chat.id,
+            "message_id": query.message.id,
+            "caption": f"**تم حظر `{target_id}` من البوت**",
+            "parse_mode": "Markdown",
+            "reply_markup": {"inline_keyboard": ban_buttons},
+        })
+    except Exception as e:
+        logger.warning(f"BanInline: {e}")
     await query.answer("تم الحظر ✔")
 
 @b3kkk.on_callback_query(filters.regex(r"^Reply:(\d+)$"))
