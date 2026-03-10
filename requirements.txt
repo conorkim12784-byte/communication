@@ -1,4 +1,4 @@
 pyrogram==2.0.106
-pyromod==0.1.4
+pyromod==3.1.6
 tgcrypto==1.2.5
 python-dotenv==1.0.1
