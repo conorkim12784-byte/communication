@@ -396,14 +396,26 @@ async def Broad(c: Client, query: CallbackQuery):
         return
 
     rep = await query.message.reply("**⏳ جاري الإذاعة...**")
-    success = sum(1 for uid in users if not (await _try_copy(msg, uid)))
+    success = 0
+    failed  = 0
+    for uid in users:
+        try:
+            await c.forward_messages(
+                chat_id=int(uid),
+                from_chat_id=msg.chat.id,
+                message_ids=msg.id,
+            )
+            success += 1
+        except Exception as e:
+            logger.warning(f"broadcast to {uid}: {e}")
+            failed += 1
+        await asyncio.sleep(0.05)  # تجنب flood
     await rep.delete()
-    await query.message.reply(f"**تم الإذاعة لـ {len(users) - success}/{len(users)} عضو**")
+    await query.message.reply(
+        f"**✅ تمت الإذاعة**\n"
+        f"نجح: {success} | فشل: {failed} | إجمالي: {len(users)}"
+    )
     await send_or_edit_panel(ADMIN_ID, PANEL_CAPTION, admin_buttons())
-
-async def _try_copy(msg, uid):
-    try: await msg.copy(int(uid)); return False
-    except Exception as e: logger.warning(f"copy to {uid}: {e}"); return True
 
 
 # ──────────────────────────────────────────
