@@ -190,14 +190,14 @@ async def send_welcome(chat_id: int, caption: str, buttons: list, photo: str | N
             "chat_id": chat_id,
             "photo": photo,
             "caption": caption,
-            "parse_mode": "Markdown",
+            "parse_mode": "HTML",
             "reply_markup": {"inline_keyboard": buttons},
         })
     else:
         await tg_api("sendMessage", {
             "chat_id": chat_id,
             "text": caption,
-            "parse_mode": "Markdown",
+            "parse_mode": "HTML",
             "reply_markup": {"inline_keyboard": buttons},
         })
 
@@ -224,9 +224,9 @@ def admin_buttons() -> list:
     ]
 
 def welcome_buttons(admin_id: int, admin_name: str) -> list:
-    """زر الترحيب للمستخدم — أزرق primary."""
+    """زر الترحيب للمستخدم — أزرق primary، بيفتح بروفايل المطور."""
     return [[
-        {"text": f"💬 {admin_name}", "callback_data": f"noop_{admin_id}", "style": "primary"}
+        {"text": f"💬 {admin_name}", "url": f"tg://user?id={admin_id}", "style": "primary"}
     ]]
 
 PANEL_CAPTION = "🤖 **لوحة تحكم المطور**\nاختر من القائمة 👇"
@@ -269,8 +269,9 @@ async def START(c: Client, m: Message):
 
     is_new = ADD_USER(user_id)
 
+    first_name = m.from_user.first_name or "أهلاً"
     welcome_text = (
-        f"مرحبا {m.from_user.mention}\n\n"
+        f"مرحبا <b>{first_name}</b>\n\n"
         "في بوت التواصل الخاص بي\n"
         "ارسل رسالتك وسيتم الرد عليك قريبا"
     )
