@@ -126,7 +126,8 @@ async def tg_api(method: str, payload: dict) -> dict:
             return await r.json()
 
 async def send_panel(chat_id: int, caption: str, buttons: list) -> int | None:
-    """بيبعت لوحة التحكم كـ animation (GIF) مع أزرار ملونة — يرجع message_id."""
+    """بيبعت لوحة التحكم كـ animation (GIF) — لو فشل يبعت رسالة نصية."""
+    # جرب GIF الأول
     res = await tg_api("sendAnimation", {
         "chat_id": chat_id,
         "animation": PANEL_GIF,
@@ -136,7 +137,20 @@ async def send_panel(chat_id: int, caption: str, buttons: list) -> int | None:
     })
     if res.get("ok"):
         return res["result"]["message_id"]
-    logger.error(f"send_panel: {res}")
+
+    logger.warning(f"send_panel GIF failed: {res.get('description')} — جاري المحاولة برسالة نصية")
+
+    # fallback — رسالة نصية لو GIF فشل
+    res2 = await tg_api("sendMessage", {
+        "chat_id": chat_id,
+        "text": caption,
+        "parse_mode": "Markdown",
+        "reply_markup": {"inline_keyboard": buttons},
+    })
+    if res2.get("ok"):
+        return res2["result"]["message_id"]
+
+    logger.error(f"send_panel fallback failed: {res2.get('description')}")
     return None
 
 async def edit_panel(chat_id: int, message_id: int, caption: str, buttons: list) -> bool:
@@ -433,7 +447,11 @@ async def UnBan(c: Client, query: CallbackQuery):
 #  استقبال رسائل المستخدمين
 # ──────────────────────────────────────────
 @b3kkk.on_message(
-    filters.private & ~filters.command("start") & ~filters.user(ADMIN_ID)
+    filters.private
+    & ~filters.command("start")
+    & ~filters.user(ADMIN_ID)
+    & ~filters.bot         # تجاهل رسائل البوتات
+    & filters.incoming     # تجاهل رسائل البوت نفسه
 )
 async def Private(c: Client, m: Message):
     user_id = m.from_user.id
