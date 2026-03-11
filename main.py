@@ -242,10 +242,10 @@ async def START(c: Client, m: Message):
 
     # الأدمن — بعت/حدث لوحة التحكم بالـ GIF
     if user_id == ADMIN_ID:
-        # امسح رسالة الـ /start
+        # ابعت الـ panel الأول، وبعدين امسح رسالة /start
+        await send_or_edit_panel(ADMIN_ID, PANEL_CAPTION, admin_buttons())
         try: await m.delete()
         except: pass
-        await send_or_edit_panel(ADMIN_ID, PANEL_CAPTION, admin_buttons())
         return
 
     # محظور
