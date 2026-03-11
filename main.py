@@ -295,19 +295,33 @@ async def START(c: Client, m: Message):
     # إشعار الأدمن بالمستخدم الجديد
     if is_new:
         try:
-            await c.send_message(
-                ADMIN_ID,
-                f"<u>«**New User**»</u>\n\n"
-                f"♤ Name : {m.from_user.first_name}\n"
+            new_user_text = (
+                f"<u>«New User»</u>\n\n"
+                f"♤ Name : <b>{m.from_user.first_name}</b>\n"
                 f"♤ User Name : {username}\n"
-                f"♤ User Id : `{user_id}`\n"
-                f"♤ Link : [Profile](tg://user?id={user_id})\n"
-                f"♤ Date : **{date.today()}**",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(m.from_user.first_name, user_id=user_id)],
-                    [InlineKeyboardButton("حظر هذا العضو", callback_data=f"Ban:{user_id}")],
-                ]),
+                f"♤ User Id : <code>{user_id}</code>\n"
+                f"♤ Link : <a href='tg://user?id={user_id}'>Profile</a>\n"
+                f"♤ Date : <b>{date.today()}</b>"
             )
+            new_user_buttons = [
+                [{"text": m.from_user.first_name, "url": f"tg://user?id={user_id}", "style": "primary"}],
+                [{"text": "🚫 حظر هذا العضو", "callback_data": f"Ban:{user_id}", "style": "primary"}],
+            ]
+            if profile_photo:
+                await tg_api("sendPhoto", {
+                    "chat_id": ADMIN_ID,
+                    "photo": profile_photo,
+                    "caption": new_user_text,
+                    "parse_mode": "HTML",
+                    "reply_markup": {"inline_keyboard": new_user_buttons},
+                })
+            else:
+                await tg_api("sendMessage", {
+                    "chat_id": ADMIN_ID,
+                    "text": new_user_text,
+                    "parse_mode": "HTML",
+                    "reply_markup": {"inline_keyboard": new_user_buttons},
+                })
         except Exception as e:
             logger.warning(f"notify admin: {e}")
 
@@ -478,22 +492,48 @@ async def Private(c: Client, m: Message):
     except Exception as e:
         logger.warning(f"get_chat_photos: {e}")
 
-    caption = f"**رسالة من:** {m.from_user.mention}\n**ID:** `{user_id}`\n─────────────────"
+    first = m.from_user.first_name or "مجهول"
+    last  = m.from_user.last_name  or ""
+    name  = (first + " " + last).strip()
+    header = (
+        f"<b>رسالة من:</b> <a href='tg://user?id={user_id}'>{name}</a>\n"
+        f"<b>ID:</b> <code>{user_id}</code>\n"
+        "─────────────────"
+    )
     try:
-        if profile_photo:
+        if profile_photo and m.text:
+            # نص — صورة + النص كله في رسالة واحدة
             await tg_api("sendPhoto", {
                 "chat_id": ADMIN_ID,
                 "photo": profile_photo,
-                "caption": caption,
-                "parse_mode": "Markdown",
+                "caption": header + f"\n\n{m.text}",
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": user_buttons},
+            })
+        elif profile_photo:
+            # ميديا — صورة البروفايل مع الهيدر، وبعدين الميديا
+            await tg_api("sendPhoto", {
+                "chat_id": ADMIN_ID,
+                "photo": profile_photo,
+                "caption": header,
+                "parse_mode": "HTML",
                 "reply_markup": {"inline_keyboard": user_buttons},
             })
             await c.copy_message(ADMIN_ID, m.chat.id, m.id)
-        else:
+        elif m.text:
+            # مفيش صورة + نص — كل حاجة في رسالة واحدة
             await tg_api("sendMessage", {
                 "chat_id": ADMIN_ID,
-                "text": caption,
-                "parse_mode": "Markdown",
+                "text": header + f"\n\n{m.text}",
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": user_buttons},
+            })
+        else:
+            # مفيش صورة + ميديا
+            await tg_api("sendMessage", {
+                "chat_id": ADMIN_ID,
+                "text": header,
+                "parse_mode": "HTML",
                 "reply_markup": {"inline_keyboard": user_buttons},
             })
             await c.copy_message(ADMIN_ID, m.chat.id, m.id)
@@ -523,8 +563,8 @@ async def BanInline(c: Client, query: CallbackQuery):
         await tg_api("editMessageCaption", {
             "chat_id": query.message.chat.id,
             "message_id": query.message.id,
-            "caption": f"**تم حظر `{target_id}` من البوت**",
-            "parse_mode": "Markdown",
+            "caption": f"<b>تم حظر <code>{target_id}</code> من البوت</b>",
+            "parse_mode": "HTML",
             "reply_markup": {"inline_keyboard": ban_buttons},
         })
     except Exception as e:
